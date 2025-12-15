@@ -79,20 +79,24 @@ class PackageManager {
         }
     }
 
-    openPackageModal(packageId = null) {
+    async openPackageModal(packageId = null) {
         const modal = document.getElementById('packageModal');
         const title = document.getElementById('packageModalTitle');
         const form = document.getElementById('packageForm');
         
         if (packageId) {
             title.textContent = 'Edit Package';
-            const packages = app.getData('packages') || [];
-            const pkg = packages.find(p => p.id === packageId);
-            if (pkg) {
-                document.getElementById('packageId').value = pkg.id;
-                document.getElementById('packageName').value = pkg.name;
-                document.getElementById('packagePrice').value = pkg.price;
-                document.getElementById('packageDescription').value = pkg.description || '';
+            try {
+                const pkg = await api.getPackage(packageId);
+                if (pkg) {
+                    document.getElementById('packageId').value = pkg._id || pkg.id;
+                    document.getElementById('packageName').value = pkg.name;
+                    document.getElementById('packagePrice').value = pkg.price;
+                    document.getElementById('packageDescription').value = pkg.description || '';
+                }
+            } catch (error) {
+                console.error('Error loading package:', error);
+                alert('Error loading package details');
             }
         } else {
             title.textContent = 'Add Package';
@@ -103,7 +107,7 @@ class PackageManager {
         modal.classList.add('active');
     }
 
-    savePackage() {
+    async savePackage() {
         const id = document.getElementById('packageId').value;
         const name = document.getElementById('packageName').value.trim();
         const price = parseFloat(document.getElementById('packagePrice').value);
@@ -114,66 +118,73 @@ class PackageManager {
             return;
         }
 
-        const packages = app.getData('packages') || [];
-        
-        if (id) {
-            // Update existing
-            const index = packages.findIndex(p => p.id === id);
-            if (index !== -1) {
-                packages[index] = { ...packages[index], name, price, description };
+        try {
+            const packageData = { name, price, description };
+            
+            if (id) {
+                // Update existing
+                await api.updatePackage(id, packageData);
+            } else {
+                // Add new
+                await api.createPackage(packageData);
             }
-        } else {
-            // Add new
-            const newPackage = {
-                id: app.generateId(),
-                name,
-                price,
-                description
-            };
-            packages.push(newPackage);
-        }
 
-        app.saveData('packages', packages);
-        this.loadPackages();
-        closeModal('packageModal');
-        
-        // Refresh customer form if it exists
-        if (window.CustomerManager) {
-            window.CustomerManager.populatePackageDropdown();
+            await this.loadPackages();
+            closeModal('packageModal');
+            
+            // Refresh customer form if it exists
+            if (window.CustomerManager) {
+                window.CustomerManager.populatePackageDropdown();
+            }
+        } catch (error) {
+            console.error('Error saving package:', error);
+            alert('Error saving package. Please try again.');
         }
     }
 
-    editPackage(id) {
-        this.openPackageModal(id);
+    async editPackage(id) {
+        await this.openPackageModal(id);
     }
 
-    deletePackage(id) {
+    async deletePackage(id) {
         if (!confirm('Are you sure you want to delete this package?')) {
             return;
         }
 
-        // Check if any customers are using this package
-        const customers = app.getData('customers') || [];
-        const customersUsingPackage = customers.filter(c => c.packageId === id);
-        
-        if (customersUsingPackage.length > 0) {
-            alert(`Cannot delete package. ${customersUsingPackage.length} customer(s) are using this package.`);
-            return;
+        try {
+            // Check if any customers are using this package
+            const customers = await api.getCustomers();
+            const customersUsingPackage = customers.filter(c => (c.packageId === id || c.package?._id === id || c.package?.id === id));
+            
+            if (customersUsingPackage.length > 0) {
+                alert(`Cannot delete package. ${customersUsingPackage.length} customer(s) are using this package.`);
+                return;
+            }
+
+            await api.deletePackage(id);
+            await this.loadPackages();
+        } catch (error) {
+            console.error('Error deleting package:', error);
+            alert('Error deleting package. Please try again.');
         }
-
-        const packages = app.getData('packages') || [];
-        const filtered = packages.filter(p => p.id !== id);
-        app.saveData('packages', filtered);
-        this.loadPackages();
     }
 
-    getPackage(id) {
-        const packages = app.getData('packages') || [];
-        return packages.find(p => p.id === id);
+    async getPackage(id) {
+        try {
+            return await api.getPackage(id);
+        } catch (error) {
+            console.error('Error getting package:', error);
+            return null;
+        }
     }
 
-    getAllPackages() {
-        return app.getData('packages') || [];
+    async getAllPackages() {
+        try {
+            return await api.getPackages();
+        } catch (error) {
+            console.error('Error getting packages:', error);
+            return [];
+        }
     }
 }
 
