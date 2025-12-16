@@ -523,6 +523,18 @@ class BarcodeScanner {
                     <input type="date" id="collectionDate" class="form-control" value="${todayStr}" style="width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem;" required />
                     <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px;">Enter the date when payment is being collected</p>
                 </div>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <label for="paymentMethod"><strong>Payment Method: *</strong></label>
+                    <select id="paymentMethod" class="form-control" style="width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem;" onchange="barcodeScanner.handlePaymentMethodChange()">
+                        <option value="Cash">Cash</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Razorpay">Razorpay (Online Payment)</option>
+                    </select>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px;">Select payment method. Razorpay will generate payment link/QR for customer</p>
+                </div>
+                <div id="razorpayInfo" style="display: none; margin-bottom: 15px; padding: 15px; background-color: #e7f3ff; border-left: 4px solid #2196F3; border-radius: 4px;">
+                    <p style="margin: 0; color: #1976D2;"><strong>ℹ️ Razorpay Payment:</strong> A payment link and QR code will be generated for the customer to pay online.</p>
+                </div>
                 <div id="duplicatePaymentWarning" style="display: none; padding: 15px; background-color: #f8d7da; border: 2px solid #dc3545; border-radius: 6px; margin-top: 15px; color: #721c24; font-size: 0.95rem;">
                     <div style="display: flex; align-items: center; margin-bottom: 8px;">
                         <strong style="font-size: 1.1rem;">⚠ PAYMENT ALREADY COLLECTED!</strong>
@@ -645,6 +657,14 @@ class BarcodeScanner {
         }
     }
 
+    handlePaymentMethodChange() {
+        const paymentMethod = document.getElementById('paymentMethod')?.value;
+        const razorpayInfo = document.getElementById('razorpayInfo');
+        if (razorpayInfo) {
+            razorpayInfo.style.display = paymentMethod === 'Razorpay' ? 'block' : 'none';
+        }
+    }
+
     async collectPayment(customerId, amount) {
         try {
             // Get customer info
@@ -659,6 +679,7 @@ class BarcodeScanner {
             const subscriptionMonth = document.getElementById('subscriptionMonth')?.value;
             const subscriptionYear = document.getElementById('subscriptionYear')?.value;
             const collectionDate = document.getElementById('collectionDate')?.value;
+            const paymentMethod = document.getElementById('paymentMethod')?.value || 'Cash';
             
             if (!subscriptionMonth || !subscriptionYear || !collectionDate) {
                 alert('Please fill in all payment details (Subscription Month, Year, and Collection Date)');
@@ -703,13 +724,44 @@ class BarcodeScanner {
                 return;
             }
             
-            if (!confirm(`Confirm payment collection:\n\nAmount: ₹${amount.toFixed(2)}\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}`)) {
-                return;
-            }
-
             // Get agent ID
             const currentAgentId = window.authManager.getCurrentAgentId();
             const agentId = currentAgentId || null;
+
+            // Handle Razorpay payment
+            if (paymentMethod === 'Razorpay') {
+                if (!confirm(`Create Razorpay payment link:\n\nAmount: ₹${amount.toFixed(2)}\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}\n\nA payment link and QR code will be generated for the customer.`)) {
+                    return;
+                }
+
+                try {
+                    const orderData = {
+                        customerId: customerId,
+                        amount: parseFloat(amount),
+                        subscriptionMonth: monthNum,
+                        subscriptionYear: yearNum,
+                        collectionDate: collectionDate,
+                        agentId: agentId,
+                        paymentMethod: 'Razorpay'
+                    };
+
+                    const result = await api.createRazorpayOrder(orderData);
+                    
+                    // Show payment link and QR code
+                    this.showRazorpayPaymentDetails(result, customer, monthName, yearNum);
+                    
+                } catch (error) {
+                    console.error('Razorpay order creation error:', error);
+                    alert('Error creating Razorpay order: ' + (error.message || 'Unknown error'));
+                }
+                return;
+            }
+
+            // Handle Cash/UPI payment
+            if (!confirm(`Confirm payment collection:\n\nAmount: ₹${amount.toFixed(2)}\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}\nPayment Method: ${paymentMethod}`)) {
+                return;
+            }
+
             const collectedBy = window.authManager.isAgent() ? 'Agent' : 'Admin';
 
             // Create payment via API
@@ -721,7 +773,8 @@ class BarcodeScanner {
                 subscriptionYear: yearNum,
                 collectionDate: collectionDate,
                 agentId: agentId,
-                collectedBy: collectedBy
+                collectedBy: collectedBy,
+                paymentMethod: paymentMethod
             });
 
             alert(`Payment of ₹${amount.toFixed(2)} collected successfully!\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}`);
@@ -737,6 +790,83 @@ class BarcodeScanner {
             console.error('Error collecting payment:', error);
             alert('Error collecting payment: ' + (error.message || 'Unknown error'));
         }
+    }
+
+    showRazorpayPaymentDetails(result, customer, monthName, yearNum) {
+        const scannedCustomerInfo = document.getElementById('scannedCustomerInfo');
+        const paymentLink = result.paymentLink;
+        const orderId = result.razorpayOrder.id;
+        const amount = result.payment.amount;
+
+        const qrCodeData = paymentLink;
+        const qrContainerId = 'razorpayQrCode';
+
+        scannedCustomerInfo.innerHTML = `
+            <div style="padding: 20px; background-color: #f0f8ff; border: 2px solid #2196F3; border-radius: 8px;">
+                <h3 style="color: #1976D2; margin-bottom: 15px;">✅ Razorpay Payment Link Generated</h3>
+                <div style="margin-bottom: 15px;">
+                    <p><strong>Customer:</strong> ${customer.name}</p>
+                    <p><strong>Amount:</strong> ₹${amount.toFixed(2)}</p>
+                    <p><strong>Subscription:</strong> ${monthName} ${yearNum}</p>
+                    <p><strong>Order ID:</strong> ${orderId}</p>
+                </div>
+                
+                <div style="margin-bottom: 20px; padding: 15px; background-color: white; border-radius: 6px;">
+                    <h4 style="margin-bottom: 10px;">Payment Link:</h4>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="razorpayLinkInput" value="${paymentLink}" readonly 
+                               style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem;">
+                        <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${paymentLink}').then(() => alert('Link copied!'))" style="padding: 8px 15px;">
+                            Copy Link
+                        </button>
+                    </div>
+                    <a href="${paymentLink}" target="_blank" class="btn btn-success" style="margin-top: 10px; display: inline-block;">
+                        Open Payment Link
+                    </a>
+                </div>
+
+                <div style="margin-bottom: 20px; padding: 15px; background-color: white; border-radius: 6px; text-align: center;">
+                    <h4 style="margin-bottom: 10px;">Scan QR Code to Pay:</h4>
+                    <div id="${qrContainerId}" style="display: inline-block; padding: 15px; background-color: white; border-radius: 8px;"></div>
+                </div>
+
+                <div style="padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 15px;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>⚠️ Important:</strong> Payment status will update automatically once customer completes the payment. 
+                        Check the dashboard or reports to see payment status.
+                    </p>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('scannedCustomerInfo').style.display='none'">Close</button>
+                </div>
+            </div>
+        `;
+
+        // Generate QR code
+        if (typeof QRCode !== 'undefined') {
+            const qrContainer = document.getElementById(qrContainerId);
+            if (qrContainer) {
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, {
+                    text: qrCodeData,
+                    width: 256,
+                    height: 256,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        }
+
+        scannedCustomerInfo.style.display = 'block';
+        
+        // Refresh dashboard after a delay to check for payment status
+        setTimeout(() => {
+            if (app.currentRoute === 'dashboard') {
+                app.loadDashboard();
+            }
+        }, 2000);
     }
 }
 
@@ -970,6 +1100,18 @@ class AdminPaymentManager {
                         <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px;">Enter the date when payment is being collected</p>
                     </div>
                     <div class="form-group" style="margin-bottom: 10px;">
+                        <label for="adminPaymentMethod"><strong>Payment Method: *</strong></label>
+                        <select id="adminPaymentMethod" class="form-control" style="width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem;" onchange="adminPaymentManager.handlePaymentMethodChange()">
+                            <option value="Cash">Cash</option>
+                            <option value="UPI">UPI</option>
+                            <option value="Razorpay">Razorpay (Online Payment)</option>
+                        </select>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px;">Select payment method. Razorpay will generate payment link/QR for customer</p>
+                    </div>
+                    <div id="adminRazorpayInfo" style="display: none; margin-bottom: 15px; padding: 15px; background-color: #e7f3ff; border-left: 4px solid #2196F3; border-radius: 4px;">
+                        <p style="margin: 0; color: #1976D2;"><strong>ℹ️ Razorpay Payment:</strong> A payment link and QR code will be generated for the customer to pay online.</p>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 10px;">
                         <label for="adminCollectingAgent"><strong>Collecting Agent (Optional):</strong></label>
                         <select id="adminCollectingAgent" class="form-control" style="width: 100%; padding: 8px; margin-top: 5px; font-size: 1rem;">
                             ${agentOptions}
@@ -1098,6 +1240,14 @@ class AdminPaymentManager {
         }
     }
 
+    handlePaymentMethodChange() {
+        const paymentMethod = document.getElementById('adminPaymentMethod')?.value;
+        const razorpayInfo = document.getElementById('adminRazorpayInfo');
+        if (razorpayInfo) {
+            razorpayInfo.style.display = paymentMethod === 'Razorpay' ? 'block' : 'none';
+        }
+    }
+
     async collectPayment(customerId, amount) {
         try {
             // Get customer info
@@ -1113,6 +1263,7 @@ class AdminPaymentManager {
             const subscriptionYear = document.getElementById('adminSubscriptionYear')?.value;
             const collectionDate = document.getElementById('adminCollectionDate')?.value;
             const collectingAgentId = document.getElementById('adminCollectingAgent')?.value || null;
+            const paymentMethod = document.getElementById('adminPaymentMethod')?.value || 'Cash';
             
             if (!subscriptionMonth || !subscriptionYear || !collectionDate) {
                 alert('Please fill in all payment details (Subscription Month, Year, and Collection Date)');
@@ -1149,12 +1300,45 @@ class AdminPaymentManager {
                       `Please select a different month/year.`);
                 return;
             }
+
+            // Handle Razorpay payment
+            if (paymentMethod === 'Razorpay') {
+                if (!confirm(`Create Razorpay payment link:\n\nAmount: ₹${amount.toFixed(2)}\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}\n\nA payment link and QR code will be generated for the customer.`)) {
+                    return;
+                }
+
+                try {
+                    const orderData = {
+                        customerId: customerId,
+                        amount: parseFloat(amount),
+                        subscriptionMonth: monthNum,
+                        subscriptionYear: yearNum,
+                        collectionDate: collectionDate,
+                        agentId: collectingAgentId,
+                        paymentMethod: 'Razorpay'
+                    };
+
+                    const result = await api.createRazorpayOrder(orderData);
+                    
+                    // Show payment link and QR code
+                    this.showRazorpayPaymentDetails(result, customer, monthName, yearNum);
+                    
+                } catch (error) {
+                    console.error('Razorpay order creation error:', error);
+                    alert('Error creating Razorpay order: ' + (error.message || 'Unknown error'));
+                }
+                return;
+            }
             
             // Get agent name if agent selected
             let agentName = 'Admin';
             if (collectingAgentId) {
                 const agent = await api.getAgent(collectingAgentId);
                 agentName = agent ? agent.name : 'Admin';
+            }
+
+            if (!confirm(`Confirm payment collection:\n\nAmount: ₹${amount.toFixed(2)}\nSubscription: ${monthName} ${subscriptionYear}\nCollection Date: ${collectionDate}\nPayment Method: ${paymentMethod}\nCollected by: ${agentName}`)) {
+                return;
             }
             
             // Create payment via API
@@ -1166,7 +1350,8 @@ class AdminPaymentManager {
                 subscriptionYear: yearNum,
                 collectionDate: collectionDate,
                 agentId: collectingAgentId,
-                collectedBy: agentName
+                collectedBy: agentName,
+                paymentMethod: paymentMethod
             });
             
             alert(`Payment collected successfully!\n\nCustomer: ${customer.name}\nSubscription: ${monthName} ${yearNum}\nAmount: ₹${amount.toFixed(2)}\nCollected by: ${agentName}`);
@@ -1185,6 +1370,83 @@ class AdminPaymentManager {
             console.error('Error collecting payment:', error);
             alert('Error collecting payment: ' + (error.message || 'Unknown error'));
         }
+    }
+
+    showRazorpayPaymentDetails(result, customer, monthName, yearNum) {
+        const adminCustomerInfo = document.getElementById('adminCustomerInfo');
+        const paymentLink = result.paymentLink;
+        const orderId = result.razorpayOrder.id;
+        const amount = result.payment.amount;
+
+        const qrCodeData = paymentLink;
+        const qrContainerId = 'adminRazorpayQrCode';
+
+        adminCustomerInfo.innerHTML = `
+            <div style="padding: 20px; background-color: #f0f8ff; border: 2px solid #2196F3; border-radius: 8px;">
+                <h3 style="color: #1976D2; margin-bottom: 15px;">✅ Razorpay Payment Link Generated</h3>
+                <div style="margin-bottom: 15px;">
+                    <p><strong>Customer:</strong> ${customer.name}</p>
+                    <p><strong>Amount:</strong> ₹${amount.toFixed(2)}</p>
+                    <p><strong>Subscription:</strong> ${monthName} ${yearNum}</p>
+                    <p><strong>Order ID:</strong> ${orderId}</p>
+                </div>
+                
+                <div style="margin-bottom: 20px; padding: 15px; background-color: white; border-radius: 6px;">
+                    <h4 style="margin-bottom: 10px;">Payment Link:</h4>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="adminRazorpayLinkInput" value="${paymentLink}" readonly 
+                               style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem;">
+                        <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${paymentLink}').then(() => alert('Link copied!'))" style="padding: 8px 15px;">
+                            Copy Link
+                        </button>
+                    </div>
+                    <a href="${paymentLink}" target="_blank" class="btn btn-success" style="margin-top: 10px; display: inline-block;">
+                        Open Payment Link
+                    </a>
+                </div>
+
+                <div style="margin-bottom: 20px; padding: 15px; background-color: white; border-radius: 6px; text-align: center;">
+                    <h4 style="margin-bottom: 10px;">Scan QR Code to Pay:</h4>
+                    <div id="${qrContainerId}" style="display: inline-block; padding: 15px; background-color: white; border-radius: 8px;"></div>
+                </div>
+
+                <div style="padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 15px;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>⚠️ Important:</strong> Payment status will update automatically once customer completes the payment. 
+                        Check the dashboard or reports to see payment status.
+                    </p>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('adminCustomerInfo').style.display='none'">Close</button>
+                </div>
+            </div>
+        `;
+
+        // Generate QR code
+        if (typeof QRCode !== 'undefined') {
+            const qrContainer = document.getElementById(qrContainerId);
+            if (qrContainer) {
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, {
+                    text: qrCodeData,
+                    width: 256,
+                    height: 256,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        }
+
+        adminCustomerInfo.style.display = 'block';
+        
+        // Refresh dashboard after a delay to check for payment status
+        setTimeout(() => {
+            if (window.app && window.app.loadDashboard) {
+                window.app.loadDashboard();
+            }
+        }, 2000);
     }
 }
 

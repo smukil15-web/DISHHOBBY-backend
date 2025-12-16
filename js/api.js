@@ -157,6 +157,14 @@ class ApiService {
         });
     }
 
+    // Razorpay order creation
+    async createRazorpayOrder(orderData) {
+        return await this.request('/payments/create-order', {
+            method: 'POST',
+            body: JSON.stringify(orderData)
+        });
+    }
+
     // Agents
     async getAgents() {
         return await this.request('/agents');
